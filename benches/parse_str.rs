@@ -78,17 +78,34 @@ fn bench_parse_invalid_groups(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_valid_hyphenated(b: &mut Bencher) {
-    b.iter(|| {
-        let _ = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    });
+fn bench_valid_urn(b: &mut Bencher) {
+    let uuids = [
+        "urn:uuid:550e8400-e29b-41d4-a716-446655440000",
+        "urn:uuid:67e55044-10b1-426f-9247-bb680e5fe0c8",
+        "urn:uuid:F9168C5E-CEB2-4faa-D6BF-329BF39FA1E4",
+        "urn:uuid:f81d4fae-7dec-11d0-7765-00a0c91e6bf6",
+    ];
+    b.iter(|| uuids.iter().all(|s| Uuid::parse_str(s).is_ok()))
 }
-
+#[bench]
+fn bench_valid_hyphenated(b: &mut Bencher) {
+    let uuids = [
+        "550e8400-e29b-41d4-a716-446655440000",
+        "67e55044-10b1-426f-9247-bb680e5fe0c8",
+        "F9168C5E-CEB2-4faa-D6BF-329BF39FA1E4",
+        "f81d4fae-7dec-11d0-7765-00a0c91e6bf6",
+    ];
+    b.iter(|| uuids.iter().all(|s| Uuid::parse_str(s).is_ok()))
+}
 #[bench]
 fn bench_valid_short(b: &mut Bencher) {
-    b.iter(|| {
-        let _ = Uuid::parse_str("67e5504410b1426f9247bb680e5fe0c8");
-    });
+    let uuids = [
+        "550e8400e29b41d4a716446655440000",
+        "67e5504410b1426f9247bb680e5fe0c8",
+        "F9168C5ECEB24faaD6BF329BF39FA1E4",
+        "f81d4fae7dec11d0776500a0c91e6bf6",
+    ];
+    b.iter(|| uuids.iter().all(|s| Uuid::parse_str(s).is_ok()))
 }
 
 #[cfg(feature = "slog")]
