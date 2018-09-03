@@ -1,6 +1,7 @@
 #![feature(test)]
 extern crate test;
 extern crate uuid;
+extern crate uuidtoa;
 
 use std::io::Write;
 use test::Bencher;
@@ -35,3 +36,17 @@ fn bench_urn(b: &mut Bencher) {
         test::black_box(buffer);
     })
 }
+
+#[bench]
+fn bench_uuidtoa(b: &mut Bencher) {
+    let uuid = Uuid::parse_str("F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4").unwrap();
+    b.iter(|| {
+        let mut buffer = [0_u8; 36];
+        {
+            let mut w: &mut [_] = &mut buffer;
+            uuidtoa::write_lower(&mut w, &uuid).unwrap();
+        }
+        test::black_box(buffer);
+    });
+}
+

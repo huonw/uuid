@@ -73,3 +73,12 @@ u128 = ["byteorder"]
 const_fn = ["nightly"]
 # Nightly marker feature gate
 nightly = []
+
+[dev-dependencies.uuidtoa]
+version = "0.1"
+
+[patch.crates-io]
+uuid = { path = "." }
+
+[profile.bench]
+lto = true
