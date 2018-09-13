@@ -31,14 +31,18 @@ fn bench_parse_valid_strings(b: &mut Bencher) {
 
 #[bench]
 fn bench_valid_hyphenated(b: &mut Bencher) {
-    b.iter(|| {
-        let _ = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    });
+    b.iter(|| Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap());
 }
 
 #[bench]
 fn bench_valid_short(b: &mut Bencher) {
+    b.iter(|| Uuid::parse_str("67e5504410b1426f9247bb680e5fe0c8").unwrap());
+}
+
+#[bench]
+fn bench_valid_urn(b: &mut Bencher) {
     b.iter(|| {
-        let _ = Uuid::parse_str("67e5504410b1426f9247bb680e5fe0c8");
+        Uuid::parse_str("urn:uuid:67e55044-10b1-426f-9247-bb680e5fe0c8")
+            .unwrap()
     });
 }
