@@ -97,32 +97,5 @@ impl ParseError {
     }
 }
 
-/// Check if the length matches any of the given criteria lengths.
-pub(crate) fn len_matches_any(len: usize, crits: &[usize]) -> bool {
-    for crit in crits {
-        if len == *crit {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// Check if the length matches any criteria lengths in the given range
-/// (inclusive).
-#[allow(dead_code)]
-pub(crate) fn len_matches_range(len: usize, min: usize, max: usize) -> bool {
-    for crit in min..(max + 1) {
-        if len == crit {
-            return true;
-        }
-    }
-
-    false
-}
-
-// Accumulated length of each hyphenated group in hex digits.
-pub(crate) const ACC_GROUP_LENS: [usize; 5] = [8, 12, 16, 20, 32];
-
 // Length of each hyphenated group in hex digits.
 pub(crate) const GROUP_LENS: [usize; 5] = [8, 4, 4, 4, 12];

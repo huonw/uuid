@@ -779,144 +779,213 @@ impl Uuid {
         // Ensure length is valid for any of the supported formats
         let len = input.len();
 
-        if len == adapter::Urn::LENGTH && input.starts_with("urn:uuid:") {
-            input = &input[9..];
-        } else if !parser::len_matches_any(
-            len,
-            &[adapter::Hyphenated::LENGTH, adapter::Simple::LENGTH],
-        ) {
-            return Err(parser::ParseError::InvalidLength {
-                expected: parser::Expected::Any(&[
-                    adapter::Hyphenated::LENGTH,
-                    adapter::Simple::LENGTH,
-                ]),
-                found: len,
-            });
+        let hyphens =
+            if len == adapter::Urn::LENGTH && input.starts_with("urn:uuid:") {
+                input = &input[9..];
+                true
+            } else if len == adapter::Hyphenated::LENGTH {
+                true
+            } else if len == adapter::Simple::LENGTH {
+                false
+            } else {
+                return Err(parser::ParseError::InvalidLength {
+                    expected: parser::Expected::Any(&[
+                        adapter::Hyphenated::LENGTH,
+                        adapter::Simple::LENGTH,
+                    ]),
+                    found: len,
+                });
+            };
+
+        const I: u8 = !0;
+        // Convert a byte to the value it represents in hex (e.g. b'a'
+        // == 97 and HEX[97] == 10). I represents an invalid hex
+        // digit.
+        const HEX: [u8; 256] = [
+            I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+            I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+            I, I, I, I, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, I, I, I, I, I, I, I, 10,
+            11, 12, 13, 14, 15, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+            I, I, I, I, I, I, I, I, I, I, 10, 11, 12, 13, 14, 15, I, I, I, I,
+            I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+            I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+            I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+            I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+            I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+            I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+            I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
+        ];
+        let hex = |b| HEX[b as usize];
+        // Records that an error occured, without overwriting an
+        // previous ones that may have happened, and #[cold]
+        // etc. keeps all this error handling off the good path
+        // and out of the hot function.
+        #[cold]
+        #[inline(never)]
+        fn sticky_error(e: &mut Option<usize>, loc: usize) {
+            if e.is_none() {
+                *e = Some(loc)
+            }
         }
 
-        // `digit` counts only hexadecimal digits, `i_char` counts all chars.
-        let mut digit = 0;
-        let mut group = 0;
-        let mut acc = 0;
+        let bytes = input.as_bytes();
+        let mut hyphens_before = 0;
         let mut buffer = [0u8; 16];
 
-        for (i_char, chr) in input.bytes().enumerate() {
-            if digit as usize >= adapter::Simple::LENGTH && group != 4 {
+        let mut hex_error = None;
+        let mut hyphen_error = None;
+        {
+            let mut next_hex = |byte| {
+                let hex = bytes.get(byte).map_or(I, |b| hex(*b));
+                if hex == I {
+                    sticky_error(&mut hex_error, byte);
+                }
+                hex
+            };
+
+            macro_rules! group {
+                ($from: expr, $to: expr) => {{
+                    for idx in $from..$to {
+                        let byte = hyphens_before + 2 * idx;
+                        let first = next_hex(byte + 0) << 4;
+                        let second = next_hex(byte + 1);
+                        buffer[idx] = first | second;
+                    }
+
+                    if $to != 16 {
+                        let byte_idx = hyphens_before + 2 * $to;
+                        if bytes[byte_idx] == b'-' {
+                            hyphens_before += 1;
+                        } else {
+                            sticky_error(&mut hyphen_error, byte_idx);
+                        }
+                    }
+                }}
+            }
+
+            group!(0, 4);
+            group!(4, 6);
+            group!(6, 8);
+            group!(8, 10);
+            group!(10, 16);
+            // stop the compiler from complaining about the
+            // (never-executed) unused assignment of hyphens_before +=
+            // 1 in the last group
+            drop(hyphens_before);
+        };
+
+        const HYPHEN_POSITIONS: [usize; 4] = [8, 13, 18, 23];
+        // H represents a location that is supposed to have a hyphen.
+        const H: usize = !0;
+        const HYPHEN_GROUPS: [usize; 36] = [
+            0, 0, 0, 0, 0, 0, 0, 0, H, 1, 1, 1, 1, H, 2, 2, 2, 2, H, 3, 3, 3,
+            3, H, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+        ];
+
+        match (hex_error, hyphen_error) {
+            // all good
+            // 01234567-ABCD-0123-ABCD-0123456789
+            (None, Some(_)) if !hyphens => Ok(Uuid::from_bytes(buffer)),
+            (None, None) => Ok(Uuid::from_bytes(buffer)),
+
+            (Some(hyphen_loc), _) if hyphen_loc >= len || bytes[hyphen_loc] == b'-' => {
+                // We've got a hyphen in the wrong place. There's four
+                // cases (first row of diagrams is HYPHEN_GROUPS):
+                //
+                // - earlier than expected
+                //   00000000H1111...
+                //   -01234567ABCD-0123-ABCD-0123456789
+                //   ^       ^ missing_loc
+                //   hyphen_loc
+                //
+                // - later than expected
+                //   00000000H1111H2222...
+                //   01234567ABCD--0123-ABCD-0123456789
+                //           ^   ^ hyphen_loc
+                //           missing_loc
+                //
+                // - missing hyphen in a short buffer
+                //   00000000H1111H2222H3333H4444444444
+                //   01234567-ABCD-0123-ABCD0123456
+                //                          ^      ^ missing_loc
+                //                          hyphen_loc
+                //
+                // - extra hyphen (everything else good)
+                //   00000000H1111...
+                //   0123-456-ABCD-0123-ABCD-012345
+                //       ^                         ^ missing_loc
+                //       hyphen_loc
+                //
+                // We need to report the group that's actually bad,
+                // which is the first of the locations, expect we may
+                // point to the place a hyphen should be, so we need
+                // to step back one to point to the actual group
+                // number in HYPHEN_GROUPS.
+                let missing_loc = hyphen_error.unwrap_or(bytes.len());
+                let first_bad_loc = if hyphen_loc < missing_loc {
+                    hyphen_loc
+                } else {
+                    missing_loc
+                };
+                let mut group = HYPHEN_GROUPS[first_bad_loc];
+                if group == H {
+                    group = HYPHEN_GROUPS[first_bad_loc - 1]
+                }
+                assert!(group != H);
+
+                Err(parser::ParseError::InvalidGroupLength {
+                    expected: parser::Expected::Exact(
+                        parser::GROUP_LENS[group],
+                    ),
+                    found: if group == 0 {
+                        hyphen_loc
+                    } else {
+                        hyphen_loc - HYPHEN_POSITIONS[group - 1] - 1
+                    },
+                    group: group,
+                })
+            }
+            (None, Some(location)) => {
+                // hyphen not in expected place, but everything else okay:
+                //
+                // 00000000H1111H2222... (HYPHEN_GROUPS)
+                // 01234567-ABCD0123ABCD0123456789abcde
+                //              ^ location
+                //
+                // As above, location points to a H place, so it needs
+                // to be stepped back one to get the group
+                assert!(hyphens && HYPHEN_GROUPS[location] == H);
+                let group = HYPHEN_GROUPS[location - 1];
                 if group == 0 {
-                    return Err(parser::ParseError::InvalidLength {
+                    // The first hyphen is missing. Special case to
+                    // maintain compatibility with previous behaviour.
+                    Err(parser::ParseError::InvalidLength {
                         expected: parser::Expected::Any(&[
                             adapter::Hyphenated::LENGTH,
                             adapter::Simple::LENGTH,
                         ]),
                         found: len,
-                    });
+                    })
+                } else {
+                    Err(parser::ParseError::InvalidGroupCount {
+                        expected: parser::Expected::Any(&[1, 5]),
+                        found: group + 1,
+                    })
                 }
-
-                return Err(parser::ParseError::InvalidGroupCount {
-                    expected: parser::Expected::Any(&[1, 5]),
-                    found: group + 1,
-                });
             }
-
-            if digit % 2 == 0 {
-                // First digit of the byte.
-                match chr {
-                    // Calulate upper half.
-                    b'0'...b'9' => acc = chr - b'0',
-                    b'a'...b'f' => acc = chr - b'a' + 10,
-                    b'A'...b'F' => acc = chr - b'A' + 10,
-                    // Found a group delimiter
-                    b'-' => {
-                        // TODO: remove the u8 cast
-                        // BODY: this only needed until we switch to
-                        //       ParseError
-                        if parser::ACC_GROUP_LENS[group] as u8 != digit {
-                            // Calculate how many digits this group consists of
-                            // in the input.
-                            let found = if group > 0 {
-                                // TODO: remove the u8 cast
-                                // BODY: this only needed until we switch to
-                                //       ParseError
-                                digit - parser::ACC_GROUP_LENS[group - 1] as u8
-                            } else {
-                                digit
-                            };
-
-                            return Err(
-                                parser::ParseError::InvalidGroupLength {
-                                    expected: parser::Expected::Exact(
-                                        parser::GROUP_LENS[group],
-                                    ),
-                                    found: found as usize,
-                                    group,
-                                },
-                            );
-                        }
-                        // Next group, decrement digit, it is incremented again
-                        // at the bottom.
-                        group += 1;
-                        digit -= 1;
-                    }
-                    _ => {
-                        return Err(parser::ParseError::InvalidCharacter {
-                            expected: "0123456789abcdefABCDEF-",
-                            found: input[i_char..].chars().next().unwrap(),
-                            index: i_char,
-                        });
-                    }
-                }
-            } else {
-                // Second digit of the byte, shift the upper half.
-                acc *= 16;
-                match chr {
-                    b'0'...b'9' => acc += chr - b'0',
-                    b'a'...b'f' => acc += chr - b'a' + 10,
-                    b'A'...b'F' => acc += chr - b'A' + 10,
-                    b'-' => {
-                        // The byte isn't complete yet.
-                        let found = if group > 0 {
-                            // TODO: remove the u8 cast
-                            // BODY: this only needed until we switch to
-                            //       ParseError
-                            digit - parser::ACC_GROUP_LENS[group - 1] as u8
-                        } else {
-                            digit
-                        };
-
-                        return Err(parser::ParseError::InvalidGroupLength {
-                            expected: parser::Expected::Exact(
-                                parser::GROUP_LENS[group],
-                            ),
-                            found: found as usize,
-                            group,
-                        });
-                    }
-                    _ => {
-                        return Err(parser::ParseError::InvalidCharacter {
-                            expected: "0123456789abcdefABCDEF-",
-                            found: input[i_char..].chars().next().unwrap(),
-                            index: i_char,
-                        });
-                    }
-                }
-                buffer[(digit / 2) as usize] = acc;
+            (Some(location), _) => {
+                // junk character
+                // 0123x567-ABCD-0123-ABCD-0123456789
+                //     ^ location
+                let value = bytes[location];
+                assert!(hex(value) == I && value != b'-');
+                Err(parser::ParseError::InvalidCharacter {
+                    expected: "0123456789abcdefABCDEF-",
+                    found: input[location..].chars().next().unwrap(),
+                    index: location,
+                })
             }
-            digit += 1;
         }
-
-        // Now check the last group.
-        // TODO: remove the u8 cast
-        // BODY: this only needed until we switch to
-        //       ParseError
-        if parser::ACC_GROUP_LENS[4] as u8 != digit {
-            return Err(parser::ParseError::InvalidGroupLength {
-                expected: parser::Expected::Exact(parser::GROUP_LENS[4]),
-                found: (digit as usize - parser::ACC_GROUP_LENS[3]),
-                group,
-            });
-        }
-
-        Ok(Uuid::from_bytes(buffer))
     }
 
     /// Tests if the UUID is nil
@@ -1128,6 +1197,15 @@ mod tests {
                 expected: EXPECTED_CHARS,
                 found: 'X',
                 index: 18,
+            })
+        );
+
+        assert_eq!(
+            Uuid::parse_str("F9168C5ECEB24-faaB-6BFF-32BF39FA1E4a"),
+            Err(parser::ParseError::InvalidGroupLength {
+                expected: parser::Expected::Exact(8),
+                found: 13,
+                group: 0,
             })
         );
 
